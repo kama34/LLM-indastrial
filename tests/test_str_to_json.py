@@ -8,6 +8,7 @@ def str_to_json(output):
     # Попытка преобразовать строку в JSON
     try:
         # Регулярное выражение для извлечения JSON данных
+        output = output.replace("\n", "")
         match = re.search(r'```json\{(.*?)\}```|```json\{(.*?)\}```|```json\{(.*?)\}|\{(.*?)\}', output)
 
         if match:
@@ -31,6 +32,11 @@ string4 = 'asdasdasd```json{"question": "Какой тип анализа исп
 string5 = '{"question": "Какой тип анализа используется при критическом чтении и为何分析 of a literary text?", "correct_answer": "Филологический анализ"}```'
 string6 = '```json{"question": "Какой тип анализа используется при критическом чтении и为何分析 of a literary text?", "correct_answer": "Филологический анализ"}'
 string7 = '{"question": "Какой тип анализа используется при критическом чтении и为何分析 of a literary text?", "correct_answer": "Филологический анализ"}'
+string8 = """```json
+{
+  "question_theme": "Анализ и критика текста"
+}
+```"""
 
 print(str_to_json(string1))
 print(str_to_json(string2))
@@ -39,3 +45,4 @@ print(str_to_json(string4))
 print(str_to_json(string5))
 print(str_to_json(string6))
 print(str_to_json(string7))
+print(str_to_json(string8))
