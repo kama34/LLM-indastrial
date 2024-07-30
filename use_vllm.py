@@ -13,35 +13,25 @@ from pydantic import BaseModel, Field
 import json
 import requests
 import os
-
-debug = True
-
-
-def log_debug(var, val):
-    if debug:
-        print(f"[Debug] {var}: {val}\n")
+import re
 
 system_message_generation = "Ты профессиональный экзаменатор с глубоким знанием предмета. Твоя задача, написание различных вопросов для студентческого экзамена. Ты должен отвечать на Русском языке."
 system_message_validation = "Ты эксперт по предмету и профессор с многолетним опытом. Твоя задача - проверять экзаминационные задания на правильность. Ты должен отвечать на Русском языке."
-system_message_summary = "Ты опытный экзаменатор, подводящий итоги проверки. Ты должен отвечать на Русском языке."
 system_message_distractors = "Ты профессиональный экзаменатор с опытом создания дистракторов. Ты должен отвечать на Русском языке."
 
 
 class QuestionTheme(BaseModel):
     question_theme: str = Field(description="Тема вопроса")
-
-
+    
 class GeneratedQuestion(BaseModel):
     question: str = Field(description="Сгенерированный вопрос")
     correct_answer: str = Field(description="Правильный ответ")
-
-
+    
 class Distractors(BaseModel):
     distractor_1: str = Field(description="Первый дистрактор")
     distractor_2: str = Field(description="Второй дистрактор")
     distractor_3: str = Field(description="Третий дистрактор")
-
-
+    
 class ExamQuestion(BaseModel):
     question: str
     correct_answer: str
@@ -54,10 +44,16 @@ class ExamQuestion(BaseModel):
         return f"# Вопрос:\n{this.question}\n\n# Правильный ответ:\n{this.correct_answer}\n\n# Дистракторы:\n - {this.distractors[0]}\n - {this.distractors[1]}\n - {this.distractors[2]}"
 
 
-# Set up PydanticOutputParsers
-parser_generation = PydanticOutputParser(pydantic_object=GeneratedQuestion)
 parser_theme = PydanticOutputParser(pydantic_object=QuestionTheme)
+parser_generation = PydanticOutputParser(pydantic_object=GeneratedQuestion)
 parser_distractors = PydanticOutputParser(pydantic_object=Distractors)
+
+def get_model_list():
+    return [
+        'qwen2',
+        'llama3',
+        "IlyaGusev/saiga_llama3_8b" # 'saiga'
+    ]
 
 def get_format_instructions(parser):
     reduced_schema = {k: v for k, v in parser.pydantic_object.schema().items()}
@@ -127,13 +123,6 @@ few_shot_examples = {
     ],
 }
 
-def get_model_list():
-    return [
-        'qwen2',
-        'llama3',
-        'saiga'
-    ]
-
 def call_api(api_url, prompt, max_tokens=1536, top_k=50, top_p=0.95, temperature=1):
     payload = {
         "prompt": prompt,
@@ -146,77 +135,74 @@ def call_api(api_url, prompt, max_tokens=1536, top_k=50, top_p=0.95, temperature
     response = requests.post(api_url, json=payload)
     
     if response.status_code == 200:
-        print(response.json())
-        return response.json()["text"]
+        print("AAAAAAAAAAAA")
+        print(f"response = {response.json()}")
+        return response.json()
     else:
         raise Exception(f"API call failed with status code {response.status_code}: {response.text}")
 
+def chat_template_messages(template, args):
+    messages = template.invoke(args).to_messages()
+    result = []
+    for message in messages:
+        role = message.type
+        if role == 'human':
+            role = 'user'
+        if role == 'ai':
+            role = 'assistant'
+        if role != 'user' and role != 'assistant' and role != 'system':
+            raise Exception(f'Unsupported role {role}')
+        
+        result.append({'role': role, 'content': message.content})
+
+    return result
+
+def use_chat_template(template, args, tokenizer):
+    messages = chat_template_messages(template, args)
+    return tokenizer.apply_chat_template(
+        messages,
+        tokenize=False, add_generation_prompt=True
+    )
+
+class ChatChain:
+    def __init__(self, template, tokenizer, api_url) -> None:
+        self.chat_template = template
+        self.api_url = api_url
+        self.tokenizer = tokenizer
+
+    def invoke(self, args):
+        prompt = use_chat_template(self.chat_template, args, self.tokenizer)
+        print(f"prompt = {prompt}")
+        prompt += "\n\n"
+        if "format_instructions" in args.keys():
+            prompt += args["format_instructions"]
+            print(f"prompt with format_instructions = {prompt}")
+        response = call_api(self.api_url, prompt)
+        return response
 
 def get_model(primary_model, few_shot=False, api_url="http://10.100.30.240:1222/generate"):
     os.environ["CUDA_VISIBLE_DEVICES"] = "1"
     llm = LLM(
-        model="IlyaGusev/saiga_llama3_8b",
+        model=primary_model,
         trust_remote_code=True,
         enable_prefix_caching=True,
         gpu_memory_utilization=0.9
     )
-
+    
     tokenizer = llm.get_tokenizer()
 
-    sampleParams = SamplingParams(
-        max_tokens=1536,
-        top_k=50,
-        top_p=0.95,
-        temperature=1,
-        stop_token_ids=[tokenizer.eos_token_id, tokenizer.convert_tokens_to_ids("<|eot_id|>")]
-    )
-
-    def chat_template_messages(template, args):
-        messages = template.invoke(args).to_messages()
-        result = []
-        for message in messages:
-            role = message.type
-            if role == 'human':
-                role = 'user'
-            if role == 'ai':
-                role = 'assistant'
-            if role != 'user' and role != 'assistant' and role != 'system':
-                raise Exception(f'Unsupported role {role}')
-            
-            result.append({'role': role, 'content': message.content})
-
-        return result
-
-    def use_chat_template(template, args):
-        messages = chat_template_messages(template, args)
-        return tokenizer.apply_chat_template(
-            messages,
-            tokenize=False, add_generation_prompt=True
-        )
-    
-    class ChatChain:
-        def __init__(self, template, api_url) -> None:
-            self.chat_template = template
-            self.api_url = api_url
-
-        def invoke(self, args):
-            prompt = use_chat_template(self.chat_template, args)
-            response = call_api(self.api_url, prompt)
-            return response
-
-    
     theme_prompt_few_shot = ChatPromptTemplate.from_messages(
         [
             ("human", "Вопрос:\n{reference_question}\n\nТщательно проанализируй пример и используй цепочку размышлений и напиши свой анализ вопроса и общей темы. Тема не должна быть слишком специфичной, а более общей. После этого, опиши общую тему вопроса."),
             ("ai", "{output}")
         ]
     )
-
+    
     theme_few_shot_prompt = FewShotChatMessagePromptTemplate(
         example_prompt=theme_prompt_few_shot,
         examples=few_shot_examples['theme'],
     )
-
+    
     theme_prompt_template = ChatPromptTemplate.from_messages(
         [
             ("system", system_message_validation),
@@ -225,32 +211,21 @@ def get_model(primary_model, few_shot=False, api_url="http://10.100.30.240:1222/
         ]
     )
 
-    theme_chain = ChatChain(theme_prompt_template, api_url)
-
-    format_theme_prompt_few_shot = ChatPromptTemplate.from_messages(
-        [
-            ("human", "Вопрос: {reference_question}\nТщательно проанализируй пример и используй цепочку размышлений и напиши свой анализ вопроса и общей темы. Тема не должна быть слишком специфичной, а более общей. После этого, опиши общую тему вопроса."),
-            ("ai", "{response}"),
-            ("human",
-             "Подведи итог анализа темы вопроса и отформатируй сгенерированный ответ (тему) на русском языке в формате JSON. Ты должен строго следовать инструкциям и вывести только JSON и ничего больше. Инструкции для формата:\n{format_instructions}"),
-            ("ai", "{output}")
-        ]
-    )
-
-    format_theme_few_shot_prompt = FewShotChatMessagePromptTemplate(
-        example_prompt=format_theme_prompt_few_shot,
-        examples=few_shot_examples['format_theme'],
-    )
-
-    format_theme_prompt = ChatPromptTemplate.from_messages(
-        [
-            *([format_theme_few_shot_prompt] if few_shot else []),
-            ("human", "Вопрос: {reference_question}\nТщательно проанализируй пример и используй цепочку размышлений и напиши свой анализ вопроса и общей темы. Тема не должна быть слишком специфичной, а более общей. После этого, опиши общую тему вопроса."),
-            ("ai", "{response}"),
-            ("human",
-             "Подведи итог анализа темы вопроса и отформатируй сгенерированный ответ (тему) на русском языке в формате JSON. Ты должен строго следовать инструкциям и вывести только JSON и ничего больше. Инструкции для формата:\n{format_instructions}")
-        ]
-    )
+    theme_chain = ChatChain(theme_prompt_template, tokenizer, api_url)
+    
+    def generate_theme(reference_question):
+        # Шаг 1: Сгенерировать тему
+        theme_args = {
+            "reference_question": reference_question,
+            "format_instructions": get_format_instructions(parser_theme)
+        }
+        print(f"theme_args = {theme_args}")
+        theme_result = theme_chain.invoke(theme_args)
+        theme_json = str_to_json(theme_result)
+        theme = theme_json['question_theme']
+        
+        print(f"theme = {theme}")
+        return theme
 
     def get_generation_prompt(existing_questions):
         generation_prompt_few_shot = ChatPromptTemplate.from_messages(
@@ -273,63 +248,8 @@ def get_model(primary_model, few_shot=False, api_url="http://10.100.30.240:1222/
             ]
         )
 
-        return ChatChain(generation_prompt_template)
-
-    format_generation_few_shot = ChatPromptTemplate.from_messages(
-        [
-            ("human",
-             "Отформатируй сгенерированный вопрос и правильный ответ к нему в формате JSON. Ты дожен взять именно сгенерированный вопрос и ответ, а не вопрос из приимера.\n{format_instructions}\nТекст: {response}\n"),
-            ("ai", "{output}")
-        ]
-    )
-
-    format_generation_few_shot_prompt = FewShotChatMessagePromptTemplate(
-        example_prompt=format_generation_few_shot,
-        examples=few_shot_examples['format_generation'],
-    )
-
-    format_generation_prompt = ChatPromptTemplate.from_messages(
-        [
-            *([format_generation_few_shot_prompt] if few_shot else []),
-            ("human",
-             "Отформатируй сгенерированный вопрос и правильный ответ к нему в формате JSON. Ты дожен взять именно сгенерированный вопрос и ответ, а не вопрос из приимера.\n{format_instructions}\nТекст: {response}\n"),
-        ]
-    )
-
-    # Step 2: Validation of question and correct answer
-    validation_few_shot = ChatPromptTemplate.from_messages(
-        [
-            ("human", "# Вопрос: {generated_question}\n# Правильный ответ: {correct_answer}\n\nСначало тщательно проанализируй правильность ответа, используя цепочку размышлений, а потом скажи, имеет ли вопрос смысл и правильный ли ответ для этого вопроса, и наконец объясни, почему этот ответ верный или нет."),
-            ("ai", "{output}")
-        ]
-    )
-
-    validation_few_shot_prompt = FewShotChatMessagePromptTemplate(
-        example_prompt=validation_few_shot,
-        examples=few_shot_examples['validation'],
-    )
-
-    validation_prompt_template = ChatPromptTemplate.from_messages(
-        [
-            ("system", system_message_validation),
-            *([validation_few_shot_prompt] if few_shot else []),
-            ("human", "# Вопрос: {generated_question}\n# Правильный ответ: {correct_answer}\n\nСначало тщательно проанализируй правильность ответа, используя цепочку размышлений, а потом скажи, имеет ли вопрос смысл и правильный ли ответ для этого вопроса, и наконец объясни, почему этот ответ верный или нет.")
-        ]
-    )
-
-    validation_chain = ChatChain(validation_prompt_template, api_url)
-
-    # Step 3: Summarize the validation answer
-    summary_prompt_template = ChatPromptTemplate.from_messages(
-        [
-            ("system", system_message_summary),
-            ("human",
-             "Следующий вопрос и ответ к нему были отданы на проверку:\n# Вопрос: {generated_question}\n# Правильный ответ: {correct_answer}\n\nРезультат проверки:\n{validation_answer}\n\nПодведи итог проверки вопроса и правильного ответа одним словом: 'правильно' или 'неправильно'. Ты должен ответить только одно слово 'правильно' или 'неправильно'")
-        ]
-    )
-
-    summary_chain = ChatChain(validation_prompt_template, api_url)
-
+        return ChatChain(generation_prompt_template, tokenizer, api_url)
+    
     def get_distractors_prompt():
         # Step 5: Generate 3 distractors
         distractors_few_shot = ChatPromptTemplate.from_messages(
@@ -352,110 +272,71 @@ def get_model(primary_model, few_shot=False, api_url="http://10.100.30.240:1222/
             ]
         )
 
-        distractors_chain = ChatChain(distractors_prompt_template)
+        distractors_chain = ChatChain(distractors_prompt_template, tokenizer, api_url)
         return distractors_chain
+    
+    def generate_exam_question(theme, reference_question, existing_questions):
+        # Шаг 2: Сгенерировать вопрос по теме
+        generation_chain = get_generation_prompt(existing_questions)
+        generation_args = {
+            "theme": theme,
+            "reference_question": reference_question,
+            "existing_questions": existing_questions,
+            "format_instructions": get_format_instructions(parser_generation)
+        }
+        generated_question_result = generation_chain.invoke(generation_args)
+        generated_question_json = str_to_json(generated_question_result)
 
-    # Format the distractors output
-    format_distractors_few_shot = ChatPromptTemplate.from_messages(
-        [
-            ("human",
-             "Отформатируй 3 неправильных ответа (дистракторов) из текста в формате JSON.\n\nТекст: {response}\n\nИнструкции для форматирования:\n{format_instructions}"),
-            ("ai", "{output}")
-        ]
-    )
-
-    format_distractors_few_shot_prompt = FewShotChatMessagePromptTemplate(
-        example_prompt=format_distractors_few_shot,
-        examples=few_shot_examples['format_distractors'],
-    )
-
-    format_distractors_prompt = ChatPromptTemplate.from_messages(
-        [
-            *([format_distractors_few_shot_prompt] if few_shot else []),
-            ("human",
-             "Отформатируй 3 неправильных ответа (дистракторов) из текста в формате JSON.\n\nТекст: {response}\n\nИнструкции для форматирования:\n{format_instructions}"),
-        ]
-    )
-
-    def generate_theme(reference_question):
-        theme_response = theme_chain.invoke(
-                    {"reference_question": reference_question})
-        log_debug("theme_response", theme_response)
-        while True:
-            try:
-                formatted_theme = ChatChain(format_theme_prompt).invoke(
-                    {"reference_question": reference_question, "response": theme_response, "format_instructions": get_format_instructions(parser_theme)})
-                log_debug("formatted_theme", formatted_theme)
-                theme = parser_theme.invoke(formatted_theme)
-                log_debug("theme", theme)
-                break
-            except Exception as e:
-                print(e)
-                continue
-        return theme
-
-    # Main function to generate and validate exam questions
-    def generate_exam_question(theme, reference_question, existing_questions: List[ExamQuestion]):
-        attempts = 0
-        while attempts <= 6:
-            # Step 1: Generate a similar question and correct answer
-            generation_chain = get_generation_prompt(
-                existing_questions)
-            generated_response = generation_chain.invoke(
-                {"theme": theme.question_theme, "reference_question": reference_question})
-            log_debug("generated_response", generated_response)
-            while True:
-                try:
-                    formatted_generation = ChatChain(format_generation_prompt).invoke(
-                        {"response": generated_response, "format_instructions": get_format_instructions(parser_generation)})
-                    log_debug("formatted_generation", formatted_generation)
-                    generated_question = parser_generation.invoke(
-                        formatted_generation)
-                    log_debug("generated_question", generated_question)
-                    break
-                except:
-                    continue
-
-            # Step 2: Validate the question and correct answer
-            validation_response = validation_chain.invoke(
-                {"generated_question": generated_question.question, "correct_answer": generated_question.correct_answer})
-            log_debug("validation_response", validation_response)
-
-            # Step 3: Summarize the validation answer
-            summary_response = summary_chain.invoke({"generated_question": generated_question.question,
-                                                    "correct_answer": generated_question.correct_answer, "validation_answer": validation_response})
-            log_debug("summary_response", summary_response)
-
-            # Step 4: If validation result is "incorrect", return to step 1
-            if "неправильно" in summary_response.strip().lower() or "правильно" not in summary_response.strip().lower():
-                attempts += 1
-            else:
-                break
-
-        # Step 5: Generate 3 distractors
+        generated_question = generated_question_json['question']
+        correct_answer = generated_question_json['correct_answer']
+        
+        print(f"generated_question = {generated_question}")
+        print(f"correct_answer = {correct_answer}")
+        
+        # Шаг 3: Генерация дистракторов
         distractors_chain = get_distractors_prompt()
-        distractors_response = distractors_chain.invoke(
-            {"theme": theme.question_theme, "generated_question": generated_question.question, "correct_answer": generated_question.correct_answer})
-        log_debug("distractors_response", distractors_response)
-        while True:
-            try:
-                formatted_distractors = ChatChain(format_distractors_prompt).invoke(
-                    {"response": distractors_response, "format_instructions": get_format_instructions(parser_distractors)})
-                log_debug("formatted_distractors", formatted_distractors)
-                distractors = parser_distractors.invoke(formatted_distractors)
-                log_debug("distractors", distractors)
-                break
-            except:
-                continue
+        distractors_args = {
+            "correct_answer": correct_answer,
+            "theme": theme,
+            "generated_question": generated_question,
+            "format_instructions": get_format_instructions(parser_distractors)
+        }
+        print(f"distractors_args = {distractors_args}")
+        distractors_result = distractors_chain.invoke(distractors_args)
+        distractors_json = str_to_json(distractors_result)
+        
+        print(f"distractors_json = {distractors_json}")
+        
+        return {
+            "theme": theme,
+            "generated_question": generated_question,
+            "correct_answer": correct_answer,
+            "distractors": distractors_json
+        }
 
-        # Step 6: Structure the output
-        exam_question = ExamQuestion(
-            question=generated_question.question,
-            correct_answer=generated_question.correct_answer,
-            distractors=[distractors.distractor_1,
-                         distractors.distractor_2, distractors.distractor_3]
-        )
+    return generate_theme, generate_exam_question
 
-        return exam_question
+def str_to_json(output):
+    if not isinstance(output, str):
+        raise ValueError("output should be a string")
 
-    return theme_chain, validation_chain, get_generation_prompt
+    # Попытка преобразовать строку в JSON
+    try:
+        # Убираем переносы строк, если они есть
+        output = output.replace("\n", "")
+        # Регулярное выражение для извлечения JSON данных
+        match = re.search(r'```json\{(.*?)\}```|```json\{(.*?)\}```|```json\{(.*?)\}|\{(.*?)\}', output)
+
+        if match:
+            # Извлекаем JSON строку из регулярного выражения
+            json_string = match.group(1) or match.group(2) or match.group(3) or match.group(4)
+            
+            # Преобразование строки в JSON объект
+            json_object = json.loads(f'{{{json_string}}}')
+            
+            return json_object
+        else:
+            print("JSON не найден")
+    except json.JSONDecodeError as e:
+        print(f"Ошибка декодирования output в output_json: {e}")
+        raise 

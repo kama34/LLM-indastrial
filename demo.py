@@ -11,6 +11,7 @@ from use_vllm import get_model, get_model_list, ExamQuestion
 import streamlit.components.v1 as components
 
 debug = False
+api_url = "http://10.100.30.240:1222/generate"
 
 
 def ChangeButtonSize(widget_label, size):
@@ -76,9 +77,9 @@ def load_parsed_questions():
 
 
 @st.cache_resource
-def load_model(primary_model, few_shot=False):
+def load_model(primary_model, few_shot=False, api_url="http://10.100.30.240:1222/generate"):
     print(f'Loaded {primary_model} model with few-shot={few_shot}')
-    return get_model(primary_model, few_shot)
+    return get_model(primary_model, few_shot, api_url=api_url)
 
 
 parsed_questions = load_parsed_questions()
@@ -108,7 +109,7 @@ st.markdown("""
     </style>
  """, unsafe_allow_html=True)
 
-allow_model_choice = False
+allow_model_choice = True
 
 if allow_model_choice:
     # Place the selectbox in the first column
@@ -128,9 +129,13 @@ if allow_model_choice:
 
     if few_shot_learning is None:
         few_shot_learning = False
-
+    
     generate_theme, generate_exam_question = load_model(
-        model_name, few_shot_learning)
+        primary_model="IlyaGusev/saiga_llama3_8b",
+        few_shot=few_shot_learning,
+        api_url=api_url
+    )
+    
 else:
     generate_theme, generate_exam_question = load_model('saiga', True)
 
@@ -183,7 +188,7 @@ if 'generate_button' in st.session_state and st.session_state.generate_button:
 
     theme = st.session_state.theme
     st.write("**Определенная тема:**")
-    st.markdown(f"{theme.question_theme}", unsafe_allow_html=True)
+    st.markdown(f"{theme}", unsafe_allow_html=True)
 
     col1_i, _ = st.columns(2)
     with col1_i:
@@ -202,31 +207,37 @@ if 'generate_button' in st.session_state and st.session_state.generate_button:
 
     if 'theme_confirmed' in st.session_state and st.session_state.theme_confirmed:
         questions = []
+        questions2 = []
         start_time = time.time()
 
         for i in range(num_questions):
             with st.spinner(f"Генерация вопроса {i + 1} из {num_questions}..."):
                 try:
                     exam_question = generate_exam_question(
-                        theme, reference_question, questions)
+                        theme, reference_question, questions2)
                     questions.append(exam_question)
+                    questions2.append(exam_question['generated_question'])
+                    
+                    generated_question = exam_question['generated_question']
+                    correct_answer = exam_question['correct_answer']
+                    distractors = exam_question['distractors']
 
                     with st.expander(f"Сгенерированный вопрос {i + 1}", expanded=(i == 0)):
-                        st.write(f"**Вопрос:** {exam_question.question}")
+                        st.write(f"**Вопрос:** {generated_question}")
 
                         st.write("**Правильный ответ:**")
-                        st.markdown(f"{exam_question.correct_answer}", unsafe_allow_html=True)
+                        st.markdown(f"{correct_answer}", unsafe_allow_html=True)
 
                         st.write("**Неправильные ответы (дистракторы):**")
-                        for j, distractor in enumerate(exam_question.distractors):
+                        for j, distractor in enumerate(distractors.values()):
                             st.markdown(f"<div style='padding: 5px; background-color: #f4cccc; color: #721c24; border: 1px solid #f5c6cb; border-radius: 5px;{' margin-top: 6px;' if j > 0 else ''}{' margin-bottom: 12px;' if j == 2 else ''}'>{distractor}</div>", unsafe_allow_html=True)
 
                     if debug:
                         with st.expander("Debug Information", expanded=False):
                             st.json({
-                                "Generated Question": exam_question.question,
-                                "Correct Answer": exam_question.correct_answer,
-                                "Distractors": exam_question.distractors,
+                                "Generated Question": generated_question,
+                                "Correct Answer": correct_answer,
+                                "Distractors": distractors,
                             })
                 except Exception as e:
                     st.error(f"Произошла ошибка при генерации вопроса {i + 1}: {str(e)}")
@@ -245,28 +256,29 @@ if "generated_questions" in st.session_state:
     elapsed_time = st.session_state.elapsed_time
 
     if not is_rendered:
-        for i, exam_question in enumerate(questions):
+        for i, exam_question in enumerate(questions.values()):
             with st.expander(f"Сгенерированный вопрос {i + 1}", expanded=(i == 0)):
-                st.write(f"**Вопрос:** {exam_question.question}")
+                st.write(f"**Вопрос:** {exam_question['generated_question']}")
 
                 st.write("**Правильный ответ:**")
-                st.markdown(f"{exam_question.correct_answer}",
+                st.markdown(f"{exam_question['correct_answer']}",
                             unsafe_allow_html=True)
 
                 st.write("**Неправильные ответы (дистракторы):**")
-                for j, distractor in enumerate(exam_question.distractors):
+                for j, distractor in enumerate(exam_question['distractors'].values()):
                     st.markdown(f"<div style='padding: 5px; background-color: #f4cccc; color: #721c24; border: 1px solid #f5c6cb; border-radius: 5px;{' margin-top: 6px;' if j > 0 else ''}{' margin-bottom: 12px;' if j == 2 else ''}'>{distractor}</div>", unsafe_allow_html=True)
 
         st.success(f"Все вопросы сгенерированы за {elapsed_time:.2f} секунд")
 
     export_data = []
     for exam_question in questions:
-        all_answers = [exam_question.correct_answer] + \
-            exam_question.distractors
+        print(f"exam_question = {exam_question}")
+        all_answers = [exam_question['correct_answer']] + \
+            list(exam_question['distractors'].values())
         random.shuffle(all_answers)
-        correct_index = all_answers.index(exam_question.correct_answer)
+        correct_index = all_answers.index(exam_question['correct_answer'])
         row = {
-            "Вопрос по компетенции (Задание)": exam_question.question,
+            "Вопрос по компетенции (Задание)": exam_question['generated_question'],
             "Правильный ответ": chr(ord('А') + correct_index),
             "Ответ А": all_answers[0],
             "Ответ Б": all_answers[1],
