@@ -306,13 +306,6 @@ def generate_exam_question(theme, reference_question, existing_questions, api_ur
     
     print(f"generated_question = {generated_question}")
     print(f"correct_answer = {correct_answer}")
-
-    # Шаг 3: Генерация дистракторов
-    #validation_args = {
-    #    "generated_question": generated_question,
-    #    "correct_answer": correct_answer
-    #}
-    #distractors = validation_chain.invoke(validation_args)
     
     # Шаг 3: Генерация дистракторов
     distractors_chain = get_distractors_prompt()
