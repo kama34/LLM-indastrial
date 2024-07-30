@@ -11,7 +11,8 @@ from api_generate import get_model, get_model_list, ExamQuestion
 import streamlit.components.v1 as components
 
 debug = False
-api_url = "http://10.100.30.240:1222/generate"
+# api_url = 'http://10.100.30.240:1222/generate'  # vllm-server-qwen2-7b
+api_url = 'http://10.100.30.240:1224/generate'  # vllm-server-qwen2-72b
 
 
 def ChangeButtonSize(widget_label, size):
@@ -77,7 +78,7 @@ def load_parsed_questions():
 
 
 @st.cache_resource
-def load_model(primary_model, few_shot=False, api_url="http://10.100.30.240:1222/generate"):
+def load_model(primary_model, few_shot=False, api_url=api_url):
     print(f'Loaded {primary_model} model with few-shot={few_shot}')
     return get_model(primary_model, few_shot, api_url=api_url)
 
@@ -137,7 +138,7 @@ if allow_model_choice:
     )
     
 else:
-    generate_theme, generate_exam_question = load_model('saiga', True)
+    generate_theme, generate_exam_question = load_model('saiga', True, api_url)
 
 template_question = st.selectbox(
     "Выберите пример вопроса из файла",
