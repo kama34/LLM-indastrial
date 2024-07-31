@@ -7,14 +7,10 @@ from typing import List, Tuple
 import json
 
 # Import the generate_theme and generate_exam_question functions from the other file
-from kama.ind.baseline.api_generate import get_model, get_model_list, ExamQuestion
+from baseline.api_generate import get_model, get_model_list, ExamQuestion
 import streamlit.components.v1 as components
 
 debug = False
-# api_url = 'http://10.100.30.240:1222/generate'  # vllm-server-qwen2-7b
-#api_url = 'http://10.100.30.240:1224/generate'  # vllm-server-qwen2-72b
-# api_url = 'http://10.100.30.239:1225/generate'  # vllm-server-llama3-72b
-# api_url = 'http://10.100.30.240:1223/generate' # vllm-server-llama3-8b 
 
 
 def ChangeButtonSize(widget_label, size):
