@@ -7,7 +7,7 @@ from typing import List, Tuple
 import json
 
 # Import the generate_theme and generate_exam_question functions from the other file
-from api_generate import get_model, get_model_list, ExamQuestion
+from kama.ind.baseline.api_generate import get_model, get_model_list, ExamQuestion
 import streamlit.components.v1 as components
 
 debug = False
