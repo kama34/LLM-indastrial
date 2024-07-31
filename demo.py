@@ -12,9 +12,9 @@ import streamlit.components.v1 as components
 
 debug = False
 # api_url = 'http://10.100.30.240:1222/generate'  # vllm-server-qwen2-7b
-# api_url = 'http://10.100.30.240:1224/generate'  # vllm-server-qwen2-72b
+#api_url = 'http://10.100.30.240:1224/generate'  # vllm-server-qwen2-72b
 # api_url = 'http://10.100.30.239:1225/generate'  # vllm-server-llama3-72b
-api_url = 'http://10.100.30.240:1223/generate' # vllm-server-llama3-8b 
+# api_url = 'http://10.100.30.240:1223/generate' # vllm-server-llama3-8b 
 
 
 def ChangeButtonSize(widget_label, size):
@@ -76,18 +76,18 @@ def load_parsed_questions():
                 distractors=[str(d) for d in q['distractors']]
             )
         )
-    return res
+    return res[2:]
 
 
 @st.cache_resource
-def load_model(primary_model, few_shot=False, api_url=api_url):
-    print(f'Loaded {primary_model} model with few-shot={few_shot}')
-    return get_model(primary_model, few_shot, api_url=api_url)
+def load_model(primary_model, num_examples):
+    print(f'Loaded {primary_model} model with few-shot={num_examples}')
+    return get_model(primary_model, num_examples)
 
 
 parsed_questions = load_parsed_questions()
 
-model_list = get_model_list()[::-1]
+model_list = get_model_list()
 
 # Create two columns
 col1, col2 = st.columns([3, 1])  # Adjust the width ratio as needed
@@ -125,22 +125,22 @@ if allow_model_choice:
 
     # Place the checkbox in the second column
     with col2:
-        few_shot_learning = st.checkbox("Few-shot learning")
+        num_examples = st.number_input(
+    "Количество примеров", min_value=0, max_value=3, value=3)
 
     if model_name is None or model_name not in model_list:
         model_name = model_list[0]
 
-    if few_shot_learning is None:
-        few_shot_learning = False
+    if num_examples is None or num_examples < 0 or num_examples > 3:
+        num_examples = 3
     
     generate_theme, generate_exam_question = load_model(
-        primary_model="IlyaGusev/saiga_llama3_8b",
-        few_shot=few_shot_learning,
-        api_url=api_url
+        primary_model=model_name,
+        num_examples=num_examples,
     )
     
 else:
-    generate_theme, generate_exam_question = load_model('saiga', True, api_url)
+    generate_theme, generate_exam_question = load_model('qwen2-72b', 3)
 
 template_question = st.selectbox(
     "Выберите пример вопроса из файла",
